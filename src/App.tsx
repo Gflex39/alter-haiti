@@ -15,7 +15,7 @@ export const App: React.FC = () => {
       {/* CINEMATIC HERO VIDEO */}
       <section className="hero-section">
         <video 
-          src="/media/jacmel3.mp4" 
+          src="media/jacmel3.mp4" 
           className="hero-video" 
           autoPlay 
           muted 
@@ -39,14 +39,14 @@ export const App: React.FC = () => {
           </p>
         </div>
         <div className="feature-image-wrapper">
-          <img src="/media/jacmel1.jpg" alt="Jacmel Community" className="feature-image" />
+          <img src="media/jacmel1.jpg" alt="Jacmel Community" className="feature-image" />
         </div>
       </section>
 
       {/* FULL WIDTH ANIMATED BANNER */}
       <section className="banner-section">
         <video 
-          src="/media/jacmel2.mp4" 
+          src="media/jacmel2.mp4" 
           className="banner-video" 
           autoPlay 
           muted 

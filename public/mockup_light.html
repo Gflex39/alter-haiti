@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alter Haiti - UI Concept</title>
+    <style>
+        :root {
+            --bg-color: #f9fafb;
+            --text-main: #111827;
+            --text-light: #6b7280;
+            --accent: #2563eb;
+        }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+        }
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 5%;
+            background: #ffffff;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .navbar h1 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        .hero {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            padding: 6rem 1rem;
+            background: linear-gradient(to bottom, #ffffff, #f3f4f6);
+        }
+        .hero h2 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin: 0 0 1rem 0;
+            letter-spacing: -0.04em;
+            max-width: 800px;
+        }
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-light);
+            max-width: 600px;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+        .btn {
+            background-color: var(--text-main);
+            color: white;
+            padding: 0.8rem 2rem;
+            border-radius: 9999px;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            padding: 4rem 5%;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .card {
+            background: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+        .card img, .card video {
+            width: 100%;
+            height: 250px;
+            object-fit: cover;
+            display: block;
+        }
+        .card-content {
+            padding: 1.5rem;
+        }
+        .card h3 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.25rem;
+        }
+        .card p {
+            margin: 0;
+            color: var(--text-light);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+
+    <nav class="navbar">
+        <h1>ALTER HAITI</h1>
+        <div class="nav-links">
+            <span>Our Mission</span>
+            <span>Projects</span>
+            <span>Donate</span>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <h2>Empowering Jacmel's Future</h2>
+        <p>We are a non-profit foundation focused on revitalizing Jacmel, Haiti through sustainable solar illumination, education, and community sanitation.</p>
+        <a href="#" class="btn">Support Our Mission</a>
+    </header>
+
+    <section class="gallery">
+        <div class="card">
+            <video src="/media/jacmel2.mp4" autoplay muted loop playsinline></video>
+            <div class="card-content">
+                <h3>Solar Illumination</h3>
+                <p>Bringing light and safety to the streets of Jacmel.</p>
+            </div>
+        </div>
+        <div class="card">
+            <img src="/media/jacmel1.jpg" alt="Community">
+            <div class="card-content">
+                <h3>Community Focus</h3>
+                <p>Working hand in hand with local leaders.</p>
+            </div>
+        </div>
+        <div class="card">
+            <video src="/media/jacmel3.mp4" autoplay muted loop playsinline></video>
+            <div class="card-content">
+                <h3>Sustainable Growth</h3>
+                <p>Building infrastructure that lasts generations.</p>
+            </div>
+        </div>
+    </section>
+
+</body>
+</html>

@@ -1,6 +1,13 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { fetchGoogleDrivePhotos, getDriveFolderWebUrl } from './services/googleDrive';
 
-const GALLERY_IMAGES = [
+interface GalleryItem {
+  id: string;
+  src: string;
+  alt: string;
+}
+
+const STATIC_GALLERY_IMAGES: GalleryItem[] = [
   'media/img1.jpg',
   'media/img2.jpg',
   'media/img3.jpg',
@@ -17,9 +24,38 @@ const GALLERY_IMAGES = [
   'media/img14.jpg',
   'media/img15.jpg',
   'media/img16.jpg',
-];
+].map((src, index) => ({
+  id: `static-${index + 1}`,
+  src,
+  alt: `Jacmel Mission Photo ${index + 1}`,
+}));
 
 export const App: React.FC = () => {
+  const [drivePhotos, setDrivePhotos] = useState<GalleryItem[]>([]);
+  const [hiddenIds, setHiddenIds] = useState<Record<string, boolean>>({});
+  const driveFolderUrl = getDriveFolderWebUrl();
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchGoogleDrivePhotos().then((photos) => {
+      if (!isMounted || photos.length === 0) return;
+      setDrivePhotos(
+        photos.map((photo) => ({
+          id: `drive-${photo.id}`,
+          src: photo.url,
+          alt: photo.name || 'Jacmel Community Photo',
+        }))
+      );
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const allGalleryImages = [...drivePhotos, ...STATIC_GALLERY_IMAGES].filter(
+    (item) => !hiddenIds[item.id]
+  );
+
   return (
     <div className="page-wrapper">
       
@@ -92,13 +128,17 @@ export const App: React.FC = () => {
           <p>Moments & Progress in Jacmel, Haiti</p>
         </div>
         <div className="photo-grid">
-          {GALLERY_IMAGES.map((imgSrc, index) => (
-            <div key={index} className="photo-card">
+          {allGalleryImages.map((item) => (
+            <div key={item.id} className="photo-card">
               <img 
-                src={imgSrc} 
-                alt={`Jacmel Mission Photo ${index + 1}`} 
+                src={item.src} 
+                alt={item.alt} 
                 className="photo-img"
                 loading="lazy"
+                referrerPolicy="no-referrer"
+                onError={() =>
+                  setHiddenIds((prev) => ({ ...prev, [item.id]: true }))
+                }
               />
             </div>
           ))}
@@ -110,6 +150,19 @@ export const App: React.FC = () => {
         <p>© 2026 Alter Haiti Foundation Inc. • Building a Brighter Future</p>
         <p className="footer-email">
           <a href="mailto:alterhaitinyfoundationinc@gmail.com">alterhaitinyfoundationinc@gmail.com</a>
+          {driveFolderUrl && (
+            <>
+              {' • '}
+              <a
+                href={driveFolderUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="staff-upload-link"
+              >
+                + Add Photos
+              </a>
+            </>
+          )}
         </p>
       </footer>
     </div>
@@ -117,3 +170,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+

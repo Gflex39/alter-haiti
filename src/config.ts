@@ -20,10 +20,3 @@ export const GOOGLE_DRIVE_CONFIG = {
   // Optional: Google Drive API Key (not required for public shared folders)
   apiKey: import.meta.env.VITE_GOOGLE_DRIVE_API_KEY || ''
 };
-
-export const GOOGLE_AUTH_CONFIG = {
-  // Optional client-side fallback; on Vercel you can set GOOGLE_CLIENT_ID in Environment Variables
-  clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
-  // Default allowed admin Google accounts (also editable live inside /admin -> Access tab)
-  defaultAllowedEmails: ['gfexatschool@gmail.com'],
-};

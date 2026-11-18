@@ -7,7 +7,16 @@ import { fetchDriveFolderPhotos } from './api/photos.js';
 // @ts-ignore - JS serverless function module
 import { sanitizeUploadFilename } from './api/upload.js';
 // @ts-ignore - JS shared auth module
-import { DEFAULT_ALLOWED_EMAILS, isValidEmail, normalizeEmail } from './lib/auth.js';
+import {
+  computeMasterPwdTag,
+  createHashedUserRecord,
+  createSessionToken,
+  normalizeUsername,
+  safeTimingEqualStrings,
+  toPublicUserSummaries,
+  verifySessionToken,
+  verifyUserPassword,
+} from './lib/auth.js';
 
 function readJsonBody(req: any): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -26,19 +35,10 @@ function readJsonBody(req: any): Promise<any> {
   });
 }
 
-async function readLocalAllowedList(allowlistFile: string): Promise<string[]> {
-  try {
-    const raw = await fs.readFile(allowlistFile, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.allowedEmails)) {
-      const cleaned = parsed.allowedEmails.map(normalizeEmail).filter(isValidEmail);
-      if (cleaned.length > 0) return cleaned;
-    }
-  } catch {
-    // Fallback
-  }
-  return [...DEFAULT_ALLOWED_EMAILS];
-}
+const LOCAL_MASTER_USERNAME = normalizeUsername(process.env.ADMIN_USERNAME || 'admin');
+const LOCAL_MASTER_PASSWORD = process.env.ADMIN_PASSWORD || 'alterhaiti';
+const LOCAL_PEPPER = `local-dev-pepper:${LOCAL_MASTER_PASSWORD}`;
+const LOCAL_SECRET = `local-dev-secret:${LOCAL_MASTER_PASSWORD}`;
 
 export default defineConfig({
   plugins: [
@@ -46,6 +46,9 @@ export default defineConfig({
     {
       name: 'local-api-middlewares',
       configureServer(server) {
+        // Keep sandbox test editor accounts in memory so git stays clean
+        let localStoredUsers: any[] = [];
+
         server.middlewares.use('/api/photos', async (req, res) => {
           const url = new URL(req.url || '', 'http://localhost');
           const folderInput =
@@ -82,25 +85,20 @@ export default defineConfig({
         server.middlewares.use('/api/content', async (req, res) => {
           res.setHeader('Content-Type', 'application/json');
           const contentFile = path.resolve(process.cwd(), 'public/site-content.json');
-          const allowlistFile = path.resolve(process.cwd(), 'config/allowed-admins.json');
-          const googleClientId =
-            process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '';
 
           if (req.method === 'GET') {
             try {
               const raw = await fs.readFile(contentFile, 'utf8');
-              const allowedEmails = await readLocalAllowedList(allowlistFile);
               res.end(
                 JSON.stringify({
                   ok: true,
                   content: JSON.parse(raw),
-                  googleClientId,
                   configured: {
-                    hasGoogleClientId: Boolean(googleClientId),
+                    hasAdminPassword: true,
                     hasGithubToken: true,
                   },
                   localDev: true,
-                  localAllowedEmails: allowedEmails,
+                  localUsers: toPublicUserSummaries(localStoredUsers, LOCAL_MASTER_USERNAME),
                 })
               );
             } catch (err) {
@@ -113,73 +111,170 @@ export default defineConfig({
           if (req.method === 'POST') {
             try {
               const body = await readJsonBody(req);
-              const allowedEmails = await readLocalAllowedList(allowlistFile);
+              const action = body.action || 'publish';
 
-              if (body.action === 'sandbox-login' || body.action === 'verify-session') {
-                const requestedEmail = normalizeEmail(
-                  body.email || allowedEmails[0] || 'gfexatschool@gmail.com'
-                );
-                if (!allowedEmails.includes(requestedEmail)) {
-                  res.statusCode = 403;
+              if (action === 'login') {
+                const u = normalizeUsername(body.username);
+                const p = String(body.password || '');
+
+                if (u === LOCAL_MASTER_USERNAME && safeTimingEqualStrings(p, LOCAL_MASTER_PASSWORD)) {
+                  const pwdTag = computeMasterPwdTag(LOCAL_MASTER_PASSWORD, LOCAL_PEPPER);
+                  const sessionToken = createSessionToken(
+                    { username: LOCAL_MASTER_USERNAME, role: 'owner', pwdTag },
+                    LOCAL_SECRET
+                  );
                   res.end(
                     JSON.stringify({
-                      ok: false,
-                      code: 'FORBIDDEN_EMAIL',
-                      error: `Access denied: ${requestedEmail} is not on the approved editors list.`,
+                      ok: true,
+                      sessionToken,
+                      user: { username: LOCAL_MASTER_USERNAME, role: 'owner' },
+                      users: toPublicUserSummaries(localStoredUsers, LOCAL_MASTER_USERNAME),
                     })
                   );
                   return;
                 }
+
+                const matched = localStoredUsers.find(
+                  (item) => normalizeUsername(item.username) === u
+                );
+                if (matched && verifyUserPassword(matched, p, LOCAL_PEPPER)) {
+                  const sessionToken = createSessionToken(
+                    {
+                      username: u,
+                      role: 'editor',
+                      pwdTag: String(matched.hash || '').slice(0, 16),
+                    },
+                    LOCAL_SECRET
+                  );
+                  res.end(
+                    JSON.stringify({
+                      ok: true,
+                      sessionToken,
+                      user: { username: u, role: 'editor' },
+                      users: toPublicUserSummaries(localStoredUsers, LOCAL_MASTER_USERNAME),
+                    })
+                  );
+                  return;
+                }
+
+                res.statusCode = 401;
                 res.end(
                   JSON.stringify({
-                    ok: true,
-                    sessionToken: `local-dev-session:${requestedEmail}`,
-                    user: {
-                      email: requestedEmail,
-                      name: requestedEmail.split('@')[0],
-                      picture: '',
-                    },
-                    allowedEmails,
-                    envPinnedEmails: [],
-                    localDev: true,
+                    ok: false,
+                    code: 'UNAUTHORIZED',
+                    error: 'Incorrect username or password.',
                   })
                 );
                 return;
               }
 
-              if (body.action === 'update-allowlist') {
-                const nextEmails: string[] = Array.from(
-                  new Set(
-                    (Array.isArray(body.allowedEmails) ? body.allowedEmails : [])
-                      .map(normalizeEmail)
-                      .filter(isValidEmail)
-                  )
+              // Authenticate local session (also accept auto-preview token in localDev)
+              let activeUser: { username: string; role: 'owner' | 'editor' } | null = null;
+              if (body.sessionToken === 'local-dev-owner') {
+                activeUser = { username: LOCAL_MASTER_USERNAME, role: 'owner' };
+              } else {
+                const decoded = verifySessionToken(body.sessionToken, LOCAL_SECRET);
+                if (decoded) {
+                  if (decoded.role === 'owner' && decoded.username === LOCAL_MASTER_USERNAME) {
+                    activeUser = { username: LOCAL_MASTER_USERNAME, role: 'owner' };
+                  } else {
+                    const m = localStoredUsers.find(
+                      (item) => normalizeUsername(item.username) === decoded.username
+                    );
+                    if (m && String(m.hash || '').slice(0, 16) === decoded.pwdTag) {
+                      activeUser = { username: decoded.username, role: 'editor' };
+                    }
+                  }
+                }
+              }
+
+              if (action === 'verify-session') {
+                if (!activeUser) {
+                  res.statusCode = 401;
+                  res.end(JSON.stringify({ ok: false, code: 'UNAUTHORIZED' }));
+                  return;
+                }
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    user: activeUser,
+                    users: toPublicUserSummaries(localStoredUsers, LOCAL_MASTER_USERNAME),
+                  })
                 );
-                if (nextEmails.length === 0) {
-                  res.statusCode = 400;
+                return;
+              }
+
+              if (!activeUser) {
+                res.statusCode = 401;
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    code: 'UNAUTHORIZED',
+                    error: 'Session expired. Please sign in again.',
+                  })
+                );
+                return;
+              }
+
+              if (action === 'upsert-user') {
+                if (activeUser.role !== 'owner') {
+                  res.statusCode = 403;
                   res.end(
                     JSON.stringify({
                       ok: false,
-                      error: 'At least one Google account must remain on the allowed list.',
+                      error: 'Only the Master Admin account can add or update users.',
                     })
                   );
                   return;
                 }
-                await fs.mkdir(path.dirname(allowlistFile), { recursive: true });
-                await fs.writeFile(
-                  allowlistFile,
-                  JSON.stringify(
-                    { allowedEmails: nextEmails, updatedAt: new Date().toISOString() },
-                    null,
-                    2
-                  ) + '\n',
-                  'utf8'
+                const target = normalizeUsername(body.username);
+                if (target === LOCAL_MASTER_USERNAME) {
+                  res.statusCode = 400;
+                  res.end(
+                    JSON.stringify({
+                      ok: false,
+                      error: `"${LOCAL_MASTER_USERNAME}" is the Master Admin username.`,
+                    })
+                  );
+                  return;
+                }
+                const record = createHashedUserRecord(target, body.password, LOCAL_PEPPER);
+                const idx = localStoredUsers.findIndex(
+                  (item) => normalizeUsername(item.username) === target
+                );
+                if (idx >= 0) {
+                  localStoredUsers[idx] = record;
+                } else {
+                  localStoredUsers.push(record);
+                }
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    users: toPublicUserSummaries(localStoredUsers, LOCAL_MASTER_USERNAME),
+                  })
+                );
+                return;
+              }
+
+              if (action === 'delete-user') {
+                if (activeUser.role !== 'owner') {
+                  res.statusCode = 403;
+                  res.end(
+                    JSON.stringify({
+                      ok: false,
+                      error: 'Only the Master Admin account can remove users.',
+                    })
+                  );
+                  return;
+                }
+                const target = normalizeUsername(body.username);
+                localStoredUsers = localStoredUsers.filter(
+                  (item) => normalizeUsername(item.username) !== target
                 );
                 res.end(
                   JSON.stringify({
                     ok: true,
-                    allowedEmails: nextEmails,
-                    envPinnedEmails: [],
+                    users: toPublicUserSummaries(localStoredUsers, LOCAL_MASTER_USERNAME),
                   })
                 );
                 return;
@@ -193,8 +288,13 @@ export default defineConfig({
               await fs.writeFile(contentFile, JSON.stringify(stamped, null, 2) + '\n', 'utf8');
               res.end(JSON.stringify({ ok: true, content: stamped, localDev: true }));
             } catch (err) {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ ok: false, error: String(err) }));
+              res.statusCode = 400;
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              );
             }
             return;
           }

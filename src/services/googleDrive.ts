@@ -17,14 +17,16 @@ export function extractDriveFolderId(input: string): string {
   return '';
 }
 
-export function getDriveFolderWebUrl(): string {
-  const folderId = extractDriveFolderId(GOOGLE_DRIVE_CONFIG.folderUrl);
+export function getDriveFolderWebUrl(folderUrlOverride?: string): string {
+  const source = folderUrlOverride !== undefined ? folderUrlOverride : GOOGLE_DRIVE_CONFIG.folderUrl;
+  const folderId = extractDriveFolderId(source);
   if (!folderId) return '';
   return `https://drive.google.com/drive/folders/${folderId}`;
 }
 
-export async function fetchGoogleDrivePhotos(): Promise<DrivePhoto[]> {
-  const folderId = extractDriveFolderId(GOOGLE_DRIVE_CONFIG.folderUrl);
+export async function fetchGoogleDrivePhotos(folderUrlOverride?: string): Promise<DrivePhoto[]> {
+  const source = folderUrlOverride !== undefined ? folderUrlOverride : GOOGLE_DRIVE_CONFIG.folderUrl;
+  const folderId = extractDriveFolderId(source);
 
   try {
     const params = new URLSearchParams();

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-11T00:00:00.000Z",
+  "theme": {
+    "bgColor": "#050505",
+    "cardBg": "#121212",
+    "textPrimary": "#ffffff",
+    "textSecondary": "#a3a3a3",
+    "accentColor": "#3b82f6",
+    "fontPreset": "editorial"
+  },
+  "header": {
+    "subtitle": "NON-PROFIT FOUNDATION",
+    "title": "ALTER HAITI",
+    "email": "alterhaitinyfoundationinc@gmail.com",
+    "showEmail": true,
+    "showCta": false,
+    "ctaText": "Support Our Mission",
+    "ctaUrl": "mailto:alterhaitinyfoundationinc@gmail.com?subject=Supporting%20Alter%20Haiti"
+  },
+  "sections": [
+    {
+      "id": "hero-main",
+      "type": "hero",
+      "mediaType": "video",
+      "mediaSrc": "media/jacmel3.mp4",
+      "brightness": 0.7,
+      "height": "tall",
+      "align": "left",
+      "heading": "Revitalizing Jacmel.",
+      "subheading": "Through solar illumination, education, and sanitation.",
+      "showCta": false,
+      "ctaText": "Get Involved",
+      "ctaUrl": "mailto:alterhaitinyfoundationinc@gmail.com"
+    },
+    {
+      "id": "mission-main",
+      "type": "mission",
+      "align": "center",
+      "heading": "Our Mission & Vision",
+      "body": "We believe that empowering the local community starts with sustainable infrastructure. By installing solar street lights, supporting education, and improving community sanitation, we bring safety and opportunity to the heart of Jacmel. Together, we are building a brighter, stronger future.",
+      "showContactBox": true,
+      "contactLabel": "Get in touch with us:",
+      "contactEmail": "alterhaitinyfoundationinc@gmail.com",
+      "showCta": false,
+      "ctaText": "Donate Today",
+      "ctaUrl": "mailto:alterhaitinyfoundationinc@gmail.com"
+    },
+    {
+      "id": "banner-main",
+      "type": "banner",
+      "mediaType": "video",
+      "mediaSrc": "media/jacmel2.mp4",
+      "brightness": 0.5,
+      "height": "medium",
+      "heading": "Together We Are Stronger.",
+      "subheading": "",
+      "showCta": false,
+      "ctaText": "Partner With Us",
+      "ctaUrl": "mailto:alterhaitinyfoundationinc@gmail.com"
+    },
+    {
+      "id": "gallery-main",
+      "type": "gallery",
+      "heading": "Community Gallery",
+      "subheading": "Moments & Progress in Jacmel, Haiti",
+      "columns": 4,
+      "showDrivePhotos": true,
+      "customImages": [
+        { "id": "static-1", "src": "media/img1.jpg", "alt": "Jacmel Mission Photo 1" },
+        { "id": "static-2", "src": "media/img2.jpg", "alt": "Jacmel Mission Photo 2" },
+        { "id": "static-3", "src": "media/img3.jpg", "alt": "Jacmel Mission Photo 3" },
+        { "id": "static-4", "src": "media/img4.jpg", "alt": "Jacmel Mission Photo 4" },
+        { "id": "static-5", "src": "media/img5.jpg", "alt": "Jacmel Mission Photo 5" },
+        { "id": "static-6", "src": "media/img6.jpg", "alt": "Jacmel Mission Photo 6" },
+        { "id": "static-7", "src": "media/img7.jpg", "alt": "Jacmel Mission Photo 7" },
+        { "id": "static-8", "src": "media/img8.jpg", "alt": "Jacmel Mission Photo 8" },
+        { "id": "static-9", "src": "media/img9.jpg", "alt": "Jacmel Mission Photo 9" },
+        { "id": "static-10", "src": "media/img10.jpg", "alt": "Jacmel Mission Photo 10" },
+        { "id": "static-11", "src": "media/img11.jpg", "alt": "Jacmel Mission Photo 11" },
+        { "id": "static-12", "src": "media/img12.jpg", "alt": "Jacmel Mission Photo 12" },
+        { "id": "static-13", "src": "media/img13.jpg", "alt": "Jacmel Mission Photo 13" },
+        { "id": "static-14", "src": "media/img14.jpg", "alt": "Jacmel Mission Photo 14" },
+        { "id": "static-15", "src": "media/img15.jpg", "alt": "Jacmel Mission Photo 15" },
+        { "id": "static-16", "src": "media/img16.jpg", "alt": "Jacmel Mission Photo 16" }
+      ],
+      "hiddenDriveIds": []
+    }
+  ],
+  "footer": {
+    "copyright": "© 2026 Alter Haiti Foundation Inc. • Building a Brighter Future",
+    "email": "alterhaitinyfoundationinc@gmail.com",
+    "driveFolderUrl": "https://drive.google.com/drive/folders/1iIUrJ-hyW3YKd6zb6exiGZJ0EVSxMUdN",
+    "showDriveUploadLink": true,
+    "showEditLink": false
+  }
+}

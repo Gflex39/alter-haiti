@@ -1,173 +1,154 @@
-import React, { useEffect, useState } from 'react';
-import { fetchGoogleDrivePhotos, getDriveFolderWebUrl } from './services/googleDrive';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AdminStudio } from './components/AdminStudio';
+import { SiteRenderer } from './components/SiteRenderer';
+import { GOOGLE_AUTH_CONFIG } from './config';
+import {
+  fetchSiteContent,
+  getStoredSessionToken,
+  ServerConfigStatus,
+} from './services/cmsApi';
+import { DEFAULT_SITE_CONTENT, SiteContent } from './types/cms';
 
-interface GalleryItem {
-  id: string;
-  src: string;
-  alt: string;
+function detectAdminRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const pathname = window.location.pathname.replace(/\/+$/, '');
+    const params = new URLSearchParams(window.location.search);
+    const hash = window.location.hash.toLowerCase();
+    return (
+      pathname === '/admin' ||
+      pathname.endsWith('/admin') ||
+      hash === '#admin' ||
+      hash === '#edit' ||
+      params.get('edit') === '1'
+    );
+  } catch {
+    return false;
+  }
 }
 
-const STATIC_GALLERY_IMAGES: GalleryItem[] = [
-  'media/img1.jpg',
-  'media/img2.jpg',
-  'media/img3.jpg',
-  'media/img4.jpg',
-  'media/img5.jpg',
-  'media/img6.jpg',
-  'media/img7.jpg',
-  'media/img8.jpg',
-  'media/img9.jpg',
-  'media/img10.jpg',
-  'media/img11.jpg',
-  'media/img12.jpg',
-  'media/img13.jpg',
-  'media/img14.jpg',
-  'media/img15.jpg',
-  'media/img16.jpg',
-].map((src, index) => ({
-  id: `static-${index + 1}`,
-  src,
-  alt: `Jacmel Mission Photo ${index + 1}`,
-}));
-
 export const App: React.FC = () => {
-  const [drivePhotos, setDrivePhotos] = useState<GalleryItem[]>([]);
-  const [hiddenIds, setHiddenIds] = useState<Record<string, boolean>>({});
-  const driveFolderUrl = getDriveFolderWebUrl();
+  const [content, setContent] = useState<SiteContent>(DEFAULT_SITE_CONTENT);
+  const [googleClientId, setGoogleClientId] = useState<string>(GOOGLE_AUTH_CONFIG.clientId);
+  const [serverConfigured, setServerConfigured] = useState<ServerConfigStatus>({
+    hasGoogleClientId: Boolean(GOOGLE_AUTH_CONFIG.clientId),
+    hasGithubToken: false,
+  });
+  const [localDev, setLocalDev] = useState(false);
+  const [localAllowedEmails, setLocalAllowedEmails] = useState<string[]>(
+    GOOGLE_AUTH_CONFIG.defaultAllowedEmails
+  );
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => detectAdminRoute());
 
   useEffect(() => {
-    let isMounted = true;
-    fetchGoogleDrivePhotos().then((photos) => {
-      if (!isMounted || photos.length === 0) return;
-      setDrivePhotos(
-        photos.map((photo) => ({
-          id: `drive-${photo.id}`,
-          src: photo.url,
-          alt: photo.name || 'Jacmel Community Photo',
-        }))
-      );
+    let active = true;
+    fetchSiteContent(detectAdminRoute()).then((res) => {
+      if (!active) return;
+      setContent(res.content);
+      setGoogleClientId(res.googleClientId);
+      setServerConfigured(res.configured);
+      setLocalDev(Boolean(res.localDev));
+      if (res.localAllowedEmails) {
+        setLocalAllowedEmails(res.localAllowedEmails);
+      }
+      setIsLoaded(true);
     });
     return () => {
-      isMounted = false;
+      active = false;
     };
   }, []);
 
-  const allGalleryImages = [...drivePhotos, ...STATIC_GALLERY_IMAGES].filter(
-    (item) => !hiddenIds[item.id]
-  );
+  useEffect(() => {
+    const syncRoute = () => setIsAdminRoute(detectAdminRoute());
+    window.addEventListener('popstate', syncRoute);
+    window.addEventListener('hashchange', syncRoute);
+    return () => {
+      window.removeEventListener('popstate', syncRoute);
+      window.removeEventListener('hashchange', syncRoute);
+    };
+  }, []);
+
+  const openEditor = useCallback(() => {
+    try {
+      const host = window.location.hostname;
+      if (host.endsWith('github.io')) {
+        window.location.hash = 'admin';
+      } else {
+        window.history.pushState({}, '', '/admin');
+      }
+    } catch {
+      // Ignore history restrictions in sandboxed preview iframes
+    }
+    setIsAdminRoute(true);
+    try {
+      window.scrollTo(0, 0);
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  const closeEditor = useCallback(() => {
+    try {
+      if (window.location.hash) {
+        window.history.pushState(
+          {},
+          '',
+          window.location.pathname.replace(/\/admin\/?$/, '/') || '/'
+        );
+      } else {
+        const nextPath = window.location.pathname.replace(/\/admin\/?$/, '') || '/';
+        window.history.pushState({}, '', nextPath);
+      }
+    } catch {
+      // Ignore history restrictions in sandboxed preview iframes
+    }
+    setIsAdminRoute(false);
+    try {
+      window.scrollTo(0, 0);
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  if (isAdminRoute) {
+    if (!isLoaded) {
+      return (
+        <div className="studio-loading-screen">
+          <div className="studio-spinner" />
+          <p>Loading Alter Haiti Website Studio...</p>
+        </div>
+      );
+    }
+    return (
+      <AdminStudio
+        initialContent={content}
+        googleClientId={googleClientId}
+        serverConfigured={serverConfigured}
+        localDev={localDev}
+        initialAllowedEmails={localAllowedEmails}
+        onPublished={(updated) => setContent(updated)}
+        onExit={closeEditor}
+      />
+    );
+  }
+
+  const showQuickEditPill = localDev || Boolean(getStoredSessionToken());
 
   return (
-    <div className="page-wrapper">
-      
-      {/* EDITORIAL HEADER */}
-      <header className="header">
-        <div className="header-top">
-          <h4>NON-PROFIT FOUNDATION</h4>
-          <h1>ALTER HAITI</h1>
-        </div>
-        <div className="header-contact">
-          <a href="mailto:alterhaitinyfoundationinc@gmail.com" className="email-link">
-            ✉ alterhaitinyfoundationinc@gmail.com
-          </a>
-        </div>
-      </header>
-
-      {/* CINEMATIC HERO VIDEO */}
-      <section className="hero-section">
-        <video 
-          src="media/jacmel3.mp4" 
-          className="hero-video" 
-          autoPlay 
-          muted 
-          loop 
-          playsInline
-        />
-        <div className="hero-text-overlay">
-          <h2>Revitalizing Jacmel.</h2>
-          <p>Through solar illumination, education, and sanitation.</p>
-        </div>
-      </section>
-
-      {/* MISSION FEATURE */}
-      <section className="mission-section">
-        <div className="mission-content">
-          <h3>Our Mission & Vision</h3>
-          <p>
-            We believe that empowering the local community starts with sustainable infrastructure. 
-            By installing solar street lights, supporting education, and improving community sanitation, 
-            we bring safety and opportunity to the heart of Jacmel. Together, we are building a brighter, stronger future.
-          </p>
-          <div className="contact-box">
-            <span>Get in touch with us:</span>
-            <a href="mailto:alterhaitinyfoundationinc@gmail.com" className="contact-email">
-              alterhaitinyfoundationinc@gmail.com
-            </a>
-          </div>
-        </div>
-      </section>
-
-      {/* FULL WIDTH ANIMATED BANNER */}
-      <section className="banner-section">
-        <video 
-          src="media/jacmel2.mp4" 
-          className="banner-video" 
-          autoPlay 
-          muted 
-          loop 
-          playsInline
-        />
-        <div className="banner-text-overlay">
-          <h2>Together We Are Stronger.</h2>
-        </div>
-      </section>
-
-      {/* NEW PHOTO GALLERY SHOWCASE */}
-      <section className="gallery-section">
-        <div className="gallery-header">
-          <h3>Community Gallery</h3>
-          <p>Moments & Progress in Jacmel, Haiti</p>
-        </div>
-        <div className="photo-grid">
-          {allGalleryImages.map((item) => (
-            <div key={item.id} className="photo-card">
-              <img 
-                src={item.src} 
-                alt={item.alt} 
-                className="photo-img"
-                loading="lazy"
-                referrerPolicy="no-referrer"
-                onError={() =>
-                  setHiddenIds((prev) => ({ ...prev, [item.id]: true }))
-                }
-              />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* FOOTER */}
-      <footer className="footer">
-        <p>© 2026 Alter Haiti Foundation Inc. • Building a Brighter Future</p>
-        <p className="footer-email">
-          <a href="mailto:alterhaitinyfoundationinc@gmail.com">alterhaitinyfoundationinc@gmail.com</a>
-          {driveFolderUrl && (
-            <>
-              {' • '}
-              <a
-                href={driveFolderUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="staff-upload-link"
-              >
-                + Add Photos
-              </a>
-            </>
-          )}
-        </p>
-      </footer>
-    </div>
+    <>
+      <SiteRenderer content={content} onOpenEditor={openEditor} />
+      {showQuickEditPill && (
+        <button
+          type="button"
+          className="floating-edit-pill"
+          onClick={openEditor}
+        >
+          ✎ Edit This Website
+        </button>
+      )}
+    </>
   );
 };
 
 export default App;
-

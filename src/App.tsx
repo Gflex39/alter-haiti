@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AdminStudio } from './components/AdminStudio';
 import { SiteRenderer } from './components/SiteRenderer';
-import { GOOGLE_AUTH_CONFIG } from './config';
 import {
   fetchSiteContent,
   getStoredSessionToken,
+  ManagedUserSummary,
   ServerConfigStatus,
 } from './services/cmsApi';
 import { DEFAULT_SITE_CONTENT, SiteContent } from './types/cms';
@@ -29,15 +29,14 @@ function detectAdminRoute(): boolean {
 
 export const App: React.FC = () => {
   const [content, setContent] = useState<SiteContent>(DEFAULT_SITE_CONTENT);
-  const [googleClientId, setGoogleClientId] = useState<string>(GOOGLE_AUTH_CONFIG.clientId);
   const [serverConfigured, setServerConfigured] = useState<ServerConfigStatus>({
-    hasGoogleClientId: Boolean(GOOGLE_AUTH_CONFIG.clientId),
+    hasAdminPassword: false,
     hasGithubToken: false,
   });
   const [localDev, setLocalDev] = useState(false);
-  const [localAllowedEmails, setLocalAllowedEmails] = useState<string[]>(
-    GOOGLE_AUTH_CONFIG.defaultAllowedEmails
-  );
+  const [initialUsers, setInitialUsers] = useState<ManagedUserSummary[]>([
+    { username: 'admin', role: 'owner' },
+  ]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => detectAdminRoute());
 
@@ -46,11 +45,10 @@ export const App: React.FC = () => {
     fetchSiteContent(detectAdminRoute()).then((res) => {
       if (!active) return;
       setContent(res.content);
-      setGoogleClientId(res.googleClientId);
       setServerConfigured(res.configured);
       setLocalDev(Boolean(res.localDev));
-      if (res.localAllowedEmails) {
-        setLocalAllowedEmails(res.localAllowedEmails);
+      if (res.localUsers) {
+        setInitialUsers(res.localUsers);
       }
       setIsLoaded(true);
     });
@@ -123,10 +121,9 @@ export const App: React.FC = () => {
     return (
       <AdminStudio
         initialContent={content}
-        googleClientId={googleClientId}
         serverConfigured={serverConfigured}
         localDev={localDev}
-        initialAllowedEmails={localAllowedEmails}
+        initialUsers={initialUsers}
         onPublished={(updated) => setContent(updated)}
         onExit={closeEditor}
       />

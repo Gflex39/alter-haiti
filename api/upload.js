@@ -1,4 +1,8 @@
-import { authenticateAdminSession } from '../lib/auth.js';
+import {
+  authenticateAdminSession,
+  getMasterAdminPassword,
+  getMasterAdminUsername,
+} from '../lib/auth.js';
 
 const DEFAULT_REPO = 'Gflex39/alter-haiti';
 const DEFAULT_BRANCH = 'main';
@@ -10,12 +14,13 @@ export function sanitizeUploadFilename(originalName) {
   const parts = raw.split('.');
   const rawExt = parts.length > 1 ? parts.pop().toLowerCase() : 'jpg';
   const ext = ALLOWED_EXTENSIONS.has(rawExt) ? rawExt : 'jpg';
-  const stem = parts
-    .join('.')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40) || 'photo';
+  const stem =
+    parts
+      .join('.')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'photo';
   return `${Date.now()}-${stem}.${ext}`;
 }
 
@@ -36,11 +41,11 @@ export default async function handler(req, res) {
   const repo = process.env.GITHUB_REPO || DEFAULT_REPO;
   const branch = process.env.GITHUB_BRANCH || DEFAULT_BRANCH;
   const githubToken = process.env.GITHUB_TOKEN || '';
-  const googleClientId =
-    process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '';
+  const masterUsername = getMasterAdminUsername();
+  const masterPassword = getMasterAdminPassword();
 
   const missing = [
-    ...(!googleClientId ? ['GOOGLE_CLIENT_ID'] : []),
+    ...(!masterPassword ? ['ADMIN_PASSWORD'] : []),
     ...(!githubToken ? ['GITHUB_TOKEN'] : []),
   ];
   if (missing.length > 0) {
@@ -58,7 +63,8 @@ export default async function handler(req, res) {
     repo,
     branch,
     githubToken,
-    googleClientId,
+    masterUsername,
+    masterPassword,
   });
 
   if (!auth.ok) {
@@ -97,7 +103,7 @@ export default async function handler(req, res) {
         'User-Agent': 'Alter-Haiti-CMS',
       },
       body: JSON.stringify({
-        message: `media: upload ${safeFilename} via visual editor (${auth.user.email})`,
+        message: `media: upload ${safeFilename} via visual editor (@${auth.user.username})`,
         content: rawBase64,
         branch,
       }),

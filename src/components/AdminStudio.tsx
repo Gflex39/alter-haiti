@@ -33,21 +33,21 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { GOOGLE_AUTH_CONFIG } from '../config';
 import {
   AdminUserProfile,
   clearLocalDraft,
   clearStoredSessionToken,
+  deleteAdminUser,
   getStoredSessionToken,
   loadLocalDraft,
-  loginLocalSandbox,
-  loginWithGoogleCredential,
+  loginWithPassword,
+  ManagedUserSummary,
   publishSiteContent,
   saveLocalDraft,
   saveStoredSessionToken,
   ServerConfigStatus,
-  updateAllowedAdminEmails,
   uploadImageToSite,
+  upsertAdminUser,
   verifyAdminSession,
 } from '../services/cmsApi';
 import { getDriveFolderWebUrl } from '../services/googleDrive';
@@ -65,33 +65,11 @@ import {
 } from '../types/cms';
 import { SelectedTarget, SiteRenderer } from './SiteRenderer';
 
-declare global {
-  interface Window {
-    google?: {
-      accounts?: {
-        id?: {
-          initialize: (config: {
-            client_id: string;
-            callback: (response: { credential?: string }) => void;
-            auto_select?: boolean;
-          }) => void;
-          renderButton: (
-            parent: HTMLElement,
-            options: Record<string, string | number | boolean>
-          ) => void;
-          disableAutoSelect?: () => void;
-        };
-      };
-    };
-  }
-}
-
 interface AdminStudioProps {
   initialContent: SiteContent;
-  googleClientId: string;
   serverConfigured: ServerConfigStatus;
   localDev?: boolean;
-  initialAllowedEmails?: string[];
+  initialUsers?: ManagedUserSummary[];
   onPublished: (updated: SiteContent) => void;
   onExit: () => void;
 }
@@ -153,42 +131,42 @@ const SECTION_CATALOG: Array<{
 
 export const AdminStudio: React.FC<AdminStudioProps> = ({
   initialContent,
-  googleClientId,
   serverConfigured,
   localDev = false,
-  initialAllowedEmails = GOOGLE_AUTH_CONFIG.defaultAllowedEmails,
+  initialUsers = [{ username: 'admin', role: 'owner' }],
   onPublished,
   onExit,
 }) => {
-  const defaultSandboxEmail = initialAllowedEmails[0] || 'gfexatschool@gmail.com';
-
-  // Google Auth & Session state
+  // Username + Password Session state
   const [sessionToken, setSessionToken] = useState<string>(() => {
     const stored = getStoredSessionToken();
     if (stored) return stored;
-    return localDev ? `local-dev-session:${defaultSandboxEmail}` : '';
+    return localDev ? 'local-dev-owner' : '';
   });
   const [currentUser, setCurrentUser] = useState<AdminUserProfile | null>(() =>
-    localDev
-      ? {
-          email: defaultSandboxEmail,
-          name: defaultSandboxEmail.split('@')[0],
-        }
-      : null
+    localDev ? { username: 'admin', role: 'owner' } : null
   );
   const [isUnlocked, setIsUnlocked] = useState<boolean>(() => Boolean(localDev));
   const [isCheckingSession, setIsCheckingSession] = useState<boolean>(() =>
     !localDev && Boolean(getStoredSessionToken())
   );
-  const [loginError, setLoginError] = useState('');
-  const [sandboxTestEmail, setSandboxTestEmail] = useState(defaultSandboxEmail);
 
-  // Allowed Google Accounts management state
-  const [allowedEmails, setAllowedEmails] = useState<string[]>(initialAllowedEmails);
-  const [envPinnedEmails, setEnvPinnedEmails] = useState<string[]>([]);
-  const [newEmailInput, setNewEmailInput] = useState('');
-  const [allowlistDirty, setAllowlistDirty] = useState(false);
-  const [isSavingAllowlist, setIsSavingAllowlist] = useState(false);
+  // Login form state
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  // Managed Editor Users state
+  const [managedUsers, setManagedUsers] = useState<ManagedUserSummary[]>(initialUsers);
+  const [newUsernameInput, setNewUsernameInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [lastCreatedCredentials, setLastCreatedCredentials] = useState<{
+    username: string;
+    password: string;
+  } | null>(null);
 
   // Content & Undo/Redo history
   const [publishedBaseline, setPublishedBaseline] = useState<SiteContent>(initialContent);
@@ -226,8 +204,6 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   } | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  const googleBtnContainerRef = useRef<HTMLDivElement | null>(null);
-
   const showToast = useCallback(
     (tone: 'success' | 'error' | 'info', message: string) => {
       setToast({ tone, message });
@@ -253,8 +229,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
       if (res.ok && res.user) {
         setSessionToken(stored);
         setCurrentUser(res.user);
-        if (res.allowedEmails) setAllowedEmails(res.allowedEmails);
-        if (res.envPinnedEmails) setEnvPinnedEmails(res.envPinnedEmails);
+        if (res.users) setManagedUsers(res.users);
         setIsUnlocked(true);
       } else {
         clearStoredSessionToken();
@@ -268,102 +243,44 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     };
   }, [localDev]);
 
-  // Load Google Identity Services button whenever locked and googleClientId is present
-  useEffect(() => {
-    if (isUnlocked || isCheckingSession || !googleClientId) return;
-
-    let cancelled = false;
-
-    const mountGoogleButton = () => {
-      if (cancelled || !window.google?.accounts?.id || !googleBtnContainerRef.current) {
-        return;
-      }
-      window.google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: async (response) => {
-          if (!response.credential) {
-            setLoginError('Google sign-in was cancelled.');
-            return;
-          }
-          setLoginError('');
-          setIsCheckingSession(true);
-          const res = await loginWithGoogleCredential(response.credential);
-          setIsCheckingSession(false);
-
-          if (res.ok && res.sessionToken && res.user) {
-            saveStoredSessionToken(res.sessionToken);
-            setSessionToken(res.sessionToken);
-            setCurrentUser(res.user);
-            if (res.allowedEmails) setAllowedEmails(res.allowedEmails);
-            if (res.envPinnedEmails) setEnvPinnedEmails(res.envPinnedEmails);
-            setIsUnlocked(true);
-            return;
-          }
-
-          setLoginError(
-            res.error || 'Access denied. Your Google account is not on the allowed list.'
-          );
-        },
-      });
-      googleBtnContainerRef.current.innerHTML = '';
-      window.google.accounts.id.renderButton(googleBtnContainerRef.current, {
-        theme: 'filled_blue',
-        size: 'large',
-        shape: 'pill',
-        text: 'signin_with',
-        width: 320,
-      });
-    };
-
-    if (window.google?.accounts?.id) {
-      mountGoogleButton();
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginUsername.trim() || !loginPassword) {
+      setLoginError('Please enter your username and password.');
       return;
     }
-
-    const existingScript = document.querySelector<HTMLScriptElement>(
-      'script[src="https://accounts.google.com/gsi/client"]'
-    );
-    if (existingScript) {
-      existingScript.addEventListener('load', mountGoogleButton);
-      return () => existingScript.removeEventListener('load', mountGoogleButton);
-    }
-
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = mountGoogleButton;
-    document.head.appendChild(script);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isUnlocked, isCheckingSession, googleClientId]);
-
-  const handleSandboxSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
     setLoginError('');
-    const res = await loginLocalSandbox(sandboxTestEmail);
+    setIsLoggingIn(true);
+    const res = await loginWithPassword(loginUsername.trim(), loginPassword);
+    setIsLoggingIn(false);
+
     if (res.ok && res.sessionToken && res.user) {
+      saveStoredSessionToken(res.sessionToken);
       setSessionToken(res.sessionToken);
       setCurrentUser(res.user);
-      if (res.allowedEmails) setAllowedEmails(res.allowedEmails);
+      if (res.users) setManagedUsers(res.users);
+      setLoginPassword('');
       setIsUnlocked(true);
       return;
     }
-    setLoginError(res.error || 'Access denied.');
+
+    if (res.code === 'ENV_NOT_CONFIGURED') {
+      setLoginError(
+        `Server setup incomplete: add ${(res.missing || ['ADMIN_PASSWORD', 'GITHUB_TOKEN']).join(' & ')} in Vercel Environment Variables.`
+      );
+      return;
+    }
+
+    setLoginError(res.error || 'Incorrect username or password.');
   };
 
   const handleSignOut = () => {
     clearStoredSessionToken();
-    try {
-      window.google?.accounts?.id?.disableAutoSelect?.();
-    } catch {
-      // Ignore
-    }
     setSessionToken('');
     setCurrentUser(null);
+    setLoginPassword('');
     setLoginError('');
+    setLastCreatedCredentials(null);
     setIsUnlocked(false);
   };
 
@@ -520,52 +437,102 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     showToast('success', `Added "${SECTION_LABELS[type]}".`);
   };
 
-  // Allowlist actions
-  const handleAddAllowedEmail = (e: React.FormEvent) => {
+  // User Account Management actions (Master Admin)
+  const handleGeneratePassword = () => {
+    const words = ['jacmel', 'haiti', 'hope', 'island', 'sunlight', 'harbor', 'community'];
+    const word = words[Math.floor(Math.random() * words.length)];
+    const digits = Math.floor(1000 + Math.random() * 9000);
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    const tail =
+      chars[Math.floor(Math.random() * chars.length)] +
+      chars[Math.floor(Math.random() * chars.length)];
+    setNewPasswordInput(`${word}-${digits}-${tail}`);
+  };
+
+  const handleSaveUserAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleaned = newEmailInput.trim().toLowerCase();
-    if (!cleaned) return;
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) {
-      showToast('error', 'Please enter a valid Google email address.');
+    const cleanUser = newUsernameInput.trim().toLowerCase();
+    const rawPass = newPasswordInput;
+
+    if (!cleanUser) {
+      showToast('error', 'Please enter a username.');
       return;
     }
-    if (allowedEmails.includes(cleaned)) {
-      showToast('info', `${cleaned} is already on the allowed list.`);
-      setNewEmailInput('');
+    if (!/^[a-z0-9._-]{2,40}$/.test(cleanUser)) {
+      showToast(
+        'error',
+        'Username must be 2–40 characters (letters, numbers, dots, hyphens, or underscores).'
+      );
       return;
     }
-    setAllowedEmails((prev) => [...prev, cleaned]);
-    setNewEmailInput('');
-    setAllowlistDirty(true);
+    if (!rawPass || rawPass.length < 6) {
+      showToast('error', 'Password must be at least 6 characters long.');
+      return;
+    }
+
+    setIsSavingUser(true);
+    const res = await upsertAdminUser(cleanUser, rawPass, sessionToken);
+    setIsSavingUser(false);
+
+    if (res.ok && res.users) {
+      setManagedUsers(res.users);
+      setLastCreatedCredentials({ username: cleanUser, password: rawPass });
+      setNewUsernameInput('');
+      setNewPasswordInput('');
+      showToast('success', `Saved login for @${cleanUser}! Copy the login details below to share.`);
+      return;
+    }
+
+    showToast('error', res.error || 'Could not save user account.');
   };
 
-  const handleRemoveAllowedEmail = (emailToRemove: string) => {
-    if (currentUser && emailToRemove === currentUser.email.toLowerCase()) {
-      showToast('error', 'You cannot remove your own signed-in Google account.');
+  const handleRemoveUserAccount = async (usernameToRemove: string) => {
+    if (!window.confirm(`Remove @${usernameToRemove}'s access to the Website Studio?`)) {
       return;
     }
-    if (allowedEmails.length <= 1) {
-      showToast('error', 'At least one Google account must remain allowed.');
+    setIsSavingUser(true);
+    const res = await deleteAdminUser(usernameToRemove, sessionToken);
+    setIsSavingUser(false);
+
+    if (res.ok && res.users) {
+      setManagedUsers(res.users);
+      if (lastCreatedCredentials?.username === usernameToRemove) {
+        setLastCreatedCredentials(null);
+      }
+      showToast('info', `Removed @${usernameToRemove}.`);
       return;
     }
-    setAllowedEmails((prev) => prev.filter((e) => e !== emailToRemove));
-    setAllowlistDirty(true);
+
+    showToast('error', res.error || 'Could not remove user account.');
   };
 
-  const handleSaveAllowlist = async () => {
-    setIsSavingAllowlist(true);
-    const res = await updateAllowedAdminEmails(allowedEmails, sessionToken);
-    setIsSavingAllowlist(false);
-
-    if (res.ok && res.allowedEmails) {
-      setAllowedEmails(res.allowedEmails);
-      if (res.envPinnedEmails) setEnvPinnedEmails(res.envPinnedEmails);
-      setAllowlistDirty(false);
-      showToast('success', 'Allowed Google accounts list saved!');
-      return;
+  const handleCopyShareCredentials = async () => {
+    if (!lastCreatedCredentials) return;
+    let studioUrl = 'https://www.alterhaitinyfoundationinc.org/admin';
+    try {
+      if (
+        typeof window !== 'undefined' &&
+        window.location.origin &&
+        !window.location.origin.includes('localhost')
+      ) {
+        studioUrl = `${window.location.origin}/admin`;
+      }
+    } catch {
+      // Use production URL fallback
     }
+    const shareText = [
+      'Alter Haiti Website Studio Login',
+      `Link: ${studioUrl}`,
+      `Username: ${lastCreatedCredentials.username}`,
+      `Password: ${lastCreatedCredentials.password}`,
+    ].join('\n');
 
-    showToast('error', res.error || 'Could not save allowed accounts list.');
+    try {
+      await navigator.clipboard.writeText(shareText);
+      showToast('success', 'Copied login instructions to clipboard!');
+    } catch {
+      showToast('info', `Username: ${lastCreatedCredentials.username} | Password: ${lastCreatedCredentials.password}`);
+    }
   };
 
   const handlePublish = async () => {
@@ -584,14 +551,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     }
 
     if (res.code === 'ENV_NOT_CONFIGURED') {
-      setMissingEnvVars(res.missing || ['GOOGLE_CLIENT_ID', 'GITHUB_TOKEN']);
+      setMissingEnvVars(res.missing || ['ADMIN_PASSWORD', 'GITHUB_TOKEN']);
       setShowSetupModal(true);
       return;
     }
 
-    if (res.code === 'UNAUTHORIZED' || res.code === 'FORBIDDEN_EMAIL') {
+    if (res.code === 'UNAUTHORIZED' || res.code === 'FORBIDDEN_USER') {
       handleSignOut();
-      setLoginError(res.error || 'Please sign in with an approved Google account.');
+      setLoginError(res.error || 'Your session expired. Please sign in again.');
       return;
     }
 
@@ -613,8 +580,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     }
 
     if (result.code === 'ENV_NOT_CONFIGURED') {
-      setMissingEnvVars(result.missing || ['GOOGLE_CLIENT_ID', 'GITHUB_TOKEN']);
+      setMissingEnvVars(result.missing || ['ADMIN_PASSWORD', 'GITHUB_TOKEN']);
       setShowSetupModal(true);
+      return;
+    }
+
+    if (result.code === 'UNAUTHORIZED' || result.code === 'FORBIDDEN_USER') {
+      handleSignOut();
+      setLoginError(result.error || 'Your session expired. Please sign in again.');
       return;
     }
 
@@ -648,19 +621,19 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // ---------------- GOOGLE SIGN-IN GATE ----------------
+  // ---------------- USERNAME + PASSWORD LOGIN GATE ----------------
   if (isCheckingSession) {
     return (
       <div className="studio-loading-screen">
         <div className="studio-spinner" />
-        <p>Verifying Google account access...</p>
+        <p>Checking editor session...</p>
       </div>
     );
   }
 
   if (!isUnlocked) {
     const needsProductionConfig =
-      !localDev && (!serverConfigured.hasGoogleClientId || !serverConfigured.hasGithubToken);
+      !localDev && (!serverConfigured.hasAdminPassword || !serverConfigured.hasGithubToken);
 
     return (
       <div className="studio-login-backdrop">
@@ -669,55 +642,82 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             <span className="studio-badge-dot" />
             <span>ALTER HAITI • WEBSITE STUDIO</span>
           </div>
-          <h1>Staff Google Sign-In</h1>
+          <h1>Editor Sign-In</h1>
           <p className="studio-login-sub">
-            Only approved Google accounts on the Alter Haiti Foundation allowlist can access this
-            editor or publish changes.
+            Enter the username and password provided by the Alter Haiti Foundation administrator.
           </p>
 
           {needsProductionConfig && (
             <div className="studio-setup-callout" style={{ marginBottom: '1rem' }}>
               <p>
-                <strong>🔒 Locked Until Configured:</strong> Add{' '}
-                <code>GOOGLE_CLIENT_ID</code> and <code>GITHUB_TOKEN</code> in{' '}
-                <strong>Vercel Dashboard → Settings → Environment Variables</strong> to activate
-                Google Sign-In on your live domain.
+                <strong>🔒 One-Time Vercel Setup Needed:</strong> Add{' '}
+                <code>ADMIN_PASSWORD</code> and <code>GITHUB_TOKEN</code> in{' '}
+                <strong>Vercel Dashboard → Settings → Environment Variables</strong> (optional:{' '}
+                <code>ADMIN_USERNAME</code>, defaults to <code>admin</code>), then redeploy once.
               </p>
             </div>
-          )}
-
-          {googleClientId && (
-            <div className="studio-google-btn-wrap">
-              <div ref={googleBtnContainerRef} />
-            </div>
-          )}
-
-          {loginError && (
-            <div className="studio-login-error-box">{loginError}</div>
           )}
 
           {localDev && (
-            <form onSubmit={handleSandboxSignIn} className="studio-sandbox-box">
-              <div className="studio-sandbox-label">
-                <ShieldCheck size={14} /> Local Preview Allowlist Tester
-              </div>
-              <p className="studio-sandbox-help">
-                Test signing in with an allowed email (e.g.{' '}
-                <code>{allowedEmails[0] || 'gfexatschool@gmail.com'}</code>) vs any other email to
-                verify unauthorized accounts are blocked:
+            <div className="studio-setup-callout" style={{ marginBottom: '1rem' }}>
+              <p>
+                <strong>Preview Mode Login:</strong> Default Master Admin is username{' '}
+                <code>admin</code> / password <code>alterhaiti</code> (or any editor login you
+                created in the Users tab).
               </p>
+            </div>
+          )}
+
+          <form onSubmit={handlePasswordLogin} className="studio-login-form">
+            <div style={{ textAlign: 'left', marginBottom: '0.65rem' }}>
+              <label className="studio-field-label">Username</label>
               <input
                 className="studio-input"
-                type="email"
-                value={sandboxTestEmail}
-                onChange={(e) => setSandboxTestEmail(e.target.value)}
-                placeholder="Enter email to test sign-in..."
+                type="text"
+                autoComplete="username"
+                autoFocus
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                placeholder="admin"
               />
-              <button type="submit" className="studio-btn studio-btn-primary studio-btn-full">
-                Sign In (Preview Mode)
-              </button>
-            </form>
-          )}
+            </div>
+
+            <div style={{ textAlign: 'left', marginBottom: '0.85rem' }}>
+              <label className="studio-field-label">Password</label>
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <input
+                  className="studio-input"
+                  type={showLoginPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  className="studio-btn studio-btn-outline"
+                  title={showLoginPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowLoginPassword((v) => !v)}
+                >
+                  {showLoginPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </div>
+
+            {loginError && (
+              <div className="studio-login-error-box" style={{ marginBottom: '0.85rem' }}>
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="studio-btn studio-btn-primary studio-btn-full"
+            >
+              {isLoggingIn ? 'Signing In...' : 'Sign In to Website Studio'}
+            </button>
+          </form>
 
           <button type="button" className="studio-back-link" onClick={onExit}>
             <ArrowLeft size={14} /> Return to Public Website
@@ -822,10 +822,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 setLeftTab('access');
                 setMobileSheet('left');
               }}
-              title="Signed in — click to manage allowed Google accounts"
+              title="Signed in — click to manage user logins"
             >
               <ShieldCheck size={13} />
-              <span>{currentUser.email}</span>
+              <span>@{currentUser.username}</span>
             </button>
           )}
           {isDirty && (
@@ -851,7 +851,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             type="button"
             className="studio-btn studio-btn-ghost"
             onClick={() => setShowSetupModal(true)}
-            title="Google Auth & Vercel Setup Guide"
+            title="Login & Vercel Setup Guide"
           >
             <HelpCircle size={15} />
           </button>
@@ -921,7 +921,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               setMobileSheet(mobileSheet === 'left' && leftTab === 'access' ? 'none' : 'left');
             }}
           >
-            <ShieldCheck size={14} /> Allowed Emails
+            <ShieldCheck size={14} /> Users
           </button>
           <button
             type="button"
@@ -980,7 +980,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 onClick={() => setLeftTab('access')}
               >
                 <ShieldCheck size={18} />
-                <span>Access</span>
+                <span>Users</span>
               </button>
             </nav>
 
@@ -1350,74 +1350,166 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               {leftTab === 'access' && (
                 <div className="studio-drawer-content">
                   <div className="studio-drawer-header">
-                    <h3>Allowed Google Accounts</h3>
+                    <h3>Editor User Logins</h3>
                     <p>
-                      Only people signed into Google with an email on this list can open{' '}
-                      <code>/admin</code> or publish changes.
+                      Create usernames & passwords to give to people you trust to edit the website.
+                      Passwords are encrypted before saving.
                     </p>
                   </div>
 
-                  <form onSubmit={handleAddAllowedEmail} className="studio-add-email-form">
-                    <input
-                      className="studio-input"
-                      type="email"
-                      value={newEmailInput}
-                      onChange={(e) => setNewEmailInput(e.target.value)}
-                      placeholder="teammate@gmail.com"
-                    />
-                    <button
-                      type="submit"
-                      className="studio-btn studio-btn-outline studio-btn-full"
-                    >
-                      <UserPlus size={14} /> Add Allowed Google Account
-                    </button>
-                  </form>
-
-                  <label className="studio-field-label" style={{ marginTop: '1rem' }}>
-                    Approved Editors ({allowedEmails.length})
-                  </label>
-                  <div className="studio-email-list">
-                    {allowedEmails.map((email) => {
-                      const isSelf = currentUser?.email.toLowerCase() === email;
-                      const isPinnedEnv = envPinnedEmails.includes(email);
-                      return (
-                        <div key={email} className="studio-email-item">
-                          <div className="studio-email-meta">
-                            <strong>{email}</strong>
-                            <div className="studio-email-badges">
-                              {isSelf && <span className="studio-mini-tag">You</span>}
-                              {isPinnedEnv && <span className="studio-mini-tag">Env Owner</span>}
-                            </div>
-                          </div>
-                          {!isSelf && !isPinnedEnv && allowedEmails.length > 1 && (
+                  {currentUser?.role !== 'owner' ? (
+                    <div className="studio-alert-info">
+                      Signed in as <strong>@{currentUser?.username}</strong> (Editor). Adding or
+                      removing user logins is restricted to the Master Admin account.
+                    </div>
+                  ) : (
+                    <>
+                      <form onSubmit={handleSaveUserAccount} className="studio-add-email-form">
+                        <FieldGroup label="Username">
+                          <input
+                            className="studio-input"
+                            type="text"
+                            autoComplete="off"
+                            value={newUsernameInput}
+                            onChange={(e) => setNewUsernameInput(e.target.value)}
+                            placeholder="e.g. marie or volunteer1"
+                          />
+                        </FieldGroup>
+                        <FieldGroup label="Password (min 6 characters)">
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <input
+                              className="studio-input"
+                              type="text"
+                              autoComplete="off"
+                              value={newPasswordInput}
+                              onChange={(e) => setNewPasswordInput(e.target.value)}
+                              placeholder="Enter or generate password"
+                            />
                             <button
                               type="button"
-                              className="studio-email-remove"
-                              title={`Remove ${email}`}
-                              onClick={() => handleRemoveAllowedEmail(email)}
+                              className="studio-btn studio-btn-outline"
+                              title="Generate a strong password"
+                              onClick={handleGeneratePassword}
                             >
-                              <Trash2 size={13} />
+                              <Sparkles size={13} />
                             </button>
+                          </div>
+                        </FieldGroup>
+                        <button
+                          type="submit"
+                          disabled={isSavingUser}
+                          className="studio-btn studio-btn-primary studio-btn-full"
+                        >
+                          <UserPlus size={14} />{' '}
+                          {isSavingUser
+                            ? 'Saving Login...'
+                            : managedUsers.some(
+                                (u) =>
+                                  u.role === 'editor' &&
+                                  u.username === newUsernameInput.trim().toLowerCase()
+                              )
+                            ? 'Update User Password'
+                            : 'Create User Login'}
+                        </button>
+                      </form>
+
+                      {lastCreatedCredentials && (
+                        <div
+                          className="studio-setup-callout"
+                          style={{ marginTop: '0.85rem', padding: '0.75rem' }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              marginBottom: '0.35rem',
+                            }}
+                          >
+                            <strong style={{ fontSize: '0.78rem' }}>
+                              Ready to Share with @{lastCreatedCredentials.username}
+                            </strong>
+                            <button
+                              type="button"
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: 'inherit',
+                                cursor: 'pointer',
+                                opacity: 0.7,
+                              }}
+                              onClick={() => setLastCreatedCredentials(null)}
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                          <div style={{ fontSize: '0.76rem', lineHeight: 1.5, marginBottom: '0.5rem' }}>
+                            <div>
+                              Username: <code>{lastCreatedCredentials.username}</code>
+                            </div>
+                            <div>
+                              Password: <code>{lastCreatedCredentials.password}</code>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="studio-btn studio-btn-outline studio-btn-full"
+                            onClick={handleCopyShareCredentials}
+                          >
+                            <Copy size={13} /> Copy Login Instructions
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <label className="studio-field-label" style={{ marginTop: '1rem' }}>
+                    Active Accounts ({managedUsers.length})
+                  </label>
+                  <div className="studio-email-list">
+                    {managedUsers.map((item) => {
+                      const isSelf = currentUser?.username === item.username;
+                      const isOwnerAccount = item.role === 'owner';
+                      return (
+                        <div key={item.username} className="studio-email-item">
+                          <div className="studio-email-meta">
+                            <strong>@{item.username}</strong>
+                            <div className="studio-email-badges">
+                              {isSelf && <span className="studio-mini-tag">You</span>}
+                              <span className="studio-mini-tag">
+                                {isOwnerAccount ? 'Master Admin' : 'Editor'}
+                              </span>
+                            </div>
+                          </div>
+                          {currentUser?.role === 'owner' && !isOwnerAccount && (
+                            <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                              <button
+                                type="button"
+                                className="studio-btn studio-btn-ghost"
+                                style={{ padding: '0.22rem 0.45rem', fontSize: '0.7rem' }}
+                                title={`Set new password for @${item.username}`}
+                                onClick={() => {
+                                  setNewUsernameInput(item.username);
+                                  handleGeneratePassword();
+                                }}
+                              >
+                                Reset
+                              </button>
+                              <button
+                                type="button"
+                                className="studio-email-remove"
+                                title={`Remove @${item.username}`}
+                                disabled={isSavingUser}
+                                onClick={() => handleRemoveUserAccount(item.username)}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
                           )}
                         </div>
                       );
                     })}
                   </div>
-
-                  <button
-                    type="button"
-                    className="studio-btn studio-btn-primary studio-btn-full"
-                    style={{ marginTop: '0.9rem' }}
-                    disabled={!allowlistDirty || isSavingAllowlist}
-                    onClick={handleSaveAllowlist}
-                  >
-                    <Check size={14} />{' '}
-                    {isSavingAllowlist
-                      ? 'Saving List...'
-                      : allowlistDirty
-                      ? 'Save Allowed Accounts List'
-                      : 'Allowed List Saved'}
-                  </button>
                 </div>
               )}
             </div>
@@ -1709,12 +1801,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         </div>
       )}
 
-      {/* ONE-TIME GOOGLE AUTH & VERCEL SETUP MODAL */}
+      {/* ONE-TIME VERCEL SETUP MODAL */}
       {showSetupModal && (
         <div className="studio-modal-backdrop" onClick={() => setShowSetupModal(false)}>
           <div className="studio-modal" onClick={(e) => e.stopPropagation()}>
             <div className="studio-modal-head">
-              <h3>Google Sign-In & $0/mo Vercel Setup</h3>
+              <h3>Login & $0/mo Vercel Setup</h3>
               <button type="button" onClick={() => setShowSetupModal(false)}>
                 <X size={18} />
               </button>
@@ -1722,19 +1814,16 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             <div className="studio-modal-body">
               {missingEnvVars.length > 0 && (
                 <div className="studio-alert-info">
-                  Add these environment variable(s) once in Vercel to enable Google Sign-In & live
+                  Add these environment variable(s) once in Vercel to enable login & live
                   publishing: <strong>{missingEnvVars.join(', ')}</strong>
                 </div>
               )}
               <ol className="studio-steps-list">
                 <li>
-                  <strong>Create Free Google OAuth Client ID:</strong> In{' '}
-                  <code>console.cloud.google.com/apis/credentials</code>, click{' '}
-                  <strong>Create Credentials → OAuth client ID → Web application</strong>, add{' '}
-                  <code>https://www.alterhaitinyfoundationinc.org</code> and{' '}
-                  <code>https://alterhaitinyfoundationinc.org</code> under{' '}
-                  <strong>Authorized JavaScript origins</strong>, and paste the Client ID into
-                  Vercel Environment Variables as <code>GOOGLE_CLIENT_ID</code>.
+                  <strong>Set Your Master Login in Vercel:</strong> Open{' '}
+                  <strong>Vercel Dashboard → Project Settings → Environment Variables</strong> and
+                  add <code>ADMIN_PASSWORD</code> (your master password) and optional{' '}
+                  <code>ADMIN_USERNAME</code> (defaults to <code>admin</code>).
                 </li>
                 <li>
                   <strong>Connect GitHub Save Token ($0/mo):</strong> Create a GitHub Fine-Grained
@@ -1743,10 +1832,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   <code>GITHUB_TOKEN</code>, and click <strong>Redeploy</strong> once.
                 </li>
                 <li>
-                  <strong>Manage Allowed Editors Anytime:</strong> Currently only{' '}
-                  <code>gfexatschool@gmail.com</code> is approved. Once signed in at{' '}
-                  <code>/admin</code>, open the <strong>Access</strong> tab on the left to add or
-                  remove any teammate&apos;s Google account in 1 click!
+                  <strong>Create Logins for Your Team Anytime:</strong> Once signed in with your
+                  Master Admin account at <code>/admin</code>, open the <strong>Users</strong> tab
+                  on the left to create usernames & passwords to hand out to teammates — or revoke
+                  them in 1 click!
                 </li>
               </ol>
 

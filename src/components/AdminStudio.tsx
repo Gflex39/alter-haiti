@@ -214,6 +214,15 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     []
   );
 
+  const scrollToCanvasTarget = useCallback((targetKey: string) => {
+    window.requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-cms-target="${targetKey}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }, []);
+
   // Verify stored production session on mount
   useEffect(() => {
     if (localDev) return;
@@ -1032,7 +1041,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     className={`studio-layer-item is-pinned ${
                       selectedTarget?.kind === 'header' ? 'is-selected' : ''
                     }`}
-                    onClick={() => setSelectedTarget({ kind: 'header' })}
+                    onClick={() => {
+                      setSelectedTarget({ kind: 'header' });
+                      scrollToCanvasTarget('header');
+                    }}
                   >
                     <span className="studio-layer-name">Top Header</span>
                     <span className="studio-layer-tag">Pinned</span>
@@ -1062,7 +1074,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                           className={`studio-layer-item ${isSel ? 'is-selected' : ''} ${
                             sec.hidden ? 'is-muted' : ''
                           }`}
-                          onClick={() => setSelectedTarget({ kind: 'section', id: sec.id })}
+                          onClick={() => {
+                            setSelectedTarget({ kind: 'section', id: sec.id });
+                            scrollToCanvasTarget(sec.id);
+                          }}
                         >
                           <GripVertical size={14} className="studio-grip" />
                           <div className="studio-layer-text">
@@ -1118,7 +1133,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                       selectedTarget?.kind === 'footer' ? 'is-selected' : ''
                     }`}
                     style={{ marginTop: '0.75rem' }}
-                    onClick={() => setSelectedTarget({ kind: 'footer' })}
+                    onClick={() => {
+                      setSelectedTarget({ kind: 'footer' });
+                      scrollToCanvasTarget('footer');
+                    }}
                   >
                     <span className="studio-layer-name">Bottom Footer</span>
                     <span className="studio-layer-tag">Pinned</span>

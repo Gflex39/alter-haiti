@@ -1,40 +1,41 @@
-import { GOOGLE_AUTH_CONFIG } from '../config';
 import { DEFAULT_SITE_CONTENT, resolveAssetUrl, SiteContent } from '../types/cms';
 
 export interface ServerConfigStatus {
-  hasGoogleClientId: boolean;
+  hasAdminPassword: boolean;
   hasGithubToken: boolean;
 }
 
 export interface AdminUserProfile {
-  email: string;
-  name: string;
-  picture?: string;
+  username: string;
+  role: 'owner' | 'editor';
+}
+
+export interface ManagedUserSummary {
+  username: string;
+  role: 'owner' | 'editor';
+  updatedAt?: string | null;
 }
 
 export interface FetchContentResult {
   content: SiteContent;
-  googleClientId: string;
   configured: ServerConfigStatus;
   localDev?: boolean;
-  localAllowedEmails?: string[];
+  localUsers?: ManagedUserSummary[];
 }
 
 export interface AuthSessionResult {
   ok: boolean;
-  code?: 'ENV_NOT_CONFIGURED' | 'FORBIDDEN_EMAIL' | 'UNAUTHORIZED' | string;
+  code?: 'ENV_NOT_CONFIGURED' | 'FORBIDDEN_USER' | 'UNAUTHORIZED' | string;
   missing?: string[];
-  email?: string;
   error?: string;
   sessionToken?: string;
   user?: AdminUserProfile;
-  allowedEmails?: string[];
-  envPinnedEmails?: string[];
+  users?: ManagedUserSummary[];
 }
 
 export interface PublishResult {
   ok: boolean;
-  code?: 'ENV_NOT_CONFIGURED' | 'FORBIDDEN_EMAIL' | 'UNAUTHORIZED' | string;
+  code?: 'ENV_NOT_CONFIGURED' | 'FORBIDDEN_USER' | 'UNAUTHORIZED' | string;
   missing?: string[];
   error?: string;
   content?: SiteContent;
@@ -43,22 +44,21 @@ export interface PublishResult {
 
 export interface UploadResult {
   ok: boolean;
-  code?: 'ENV_NOT_CONFIGURED' | 'FORBIDDEN_EMAIL' | 'UNAUTHORIZED' | string;
+  code?: 'ENV_NOT_CONFIGURED' | 'FORBIDDEN_USER' | 'UNAUTHORIZED' | string;
   missing?: string[];
   error?: string;
   url?: string;
   relativePath?: string;
 }
 
-export interface AllowlistUpdateResult {
+export interface UserManagementResult {
   ok: boolean;
   error?: string;
-  allowedEmails?: string[];
-  envPinnedEmails?: string[];
+  users?: ManagedUserSummary[];
 }
 
 const DRAFT_STORAGE_KEY = 'alter_haiti_cms_draft_v1';
-export const SESSION_TOKEN_KEY = 'alter_haiti_studio_session_v1';
+export const SESSION_TOKEN_KEY = 'alter_haiti_studio_session_v2';
 
 export function saveStoredSessionToken(token: string): void {
   try {
@@ -120,20 +120,14 @@ export async function fetchSiteContent(fresh = false): Promise<FetchContentResul
     if (res.ok) {
       const data = await res.json();
       if (data && data.content && Array.isArray(data.content.sections)) {
-        const resolvedClientId = data.googleClientId || GOOGLE_AUTH_CONFIG.clientId || '';
         return {
           content: mergeWithDefaults(data.content),
-          googleClientId: resolvedClientId,
           configured: {
-            hasGoogleClientId: Boolean(
-              data.configured?.hasGoogleClientId || resolvedClientId
-            ),
+            hasAdminPassword: Boolean(data.configured?.hasAdminPassword),
             hasGithubToken: Boolean(data.configured?.hasGithubToken),
           },
           localDev: Boolean(data.localDev),
-          localAllowedEmails: Array.isArray(data.localAllowedEmails)
-            ? data.localAllowedEmails
-            : undefined,
+          localUsers: Array.isArray(data.localUsers) ? data.localUsers : undefined,
         };
       }
     }
@@ -149,9 +143,8 @@ export async function fetchSiteContent(fresh = false): Promise<FetchContentResul
       if (staticData && Array.isArray(staticData.sections)) {
         return {
           content: mergeWithDefaults(staticData),
-          googleClientId: GOOGLE_AUTH_CONFIG.clientId || '',
           configured: {
-            hasGoogleClientId: Boolean(GOOGLE_AUTH_CONFIG.clientId),
+            hasAdminPassword: false,
             hasGithubToken: false,
           },
         };
@@ -163,9 +156,8 @@ export async function fetchSiteContent(fresh = false): Promise<FetchContentResul
 
   return {
     content: DEFAULT_SITE_CONTENT,
-    googleClientId: GOOGLE_AUTH_CONFIG.clientId || '',
     configured: {
-      hasGoogleClientId: Boolean(GOOGLE_AUTH_CONFIG.clientId),
+      hasAdminPassword: false,
       hasGithubToken: false,
     },
   };
@@ -182,34 +174,21 @@ function mergeWithDefaults(incoming: Partial<SiteContent>): SiteContent {
   };
 }
 
-export async function loginWithGoogleCredential(idToken: string): Promise<AuthSessionResult> {
+export async function loginWithPassword(
+  username: string,
+  password: string
+): Promise<AuthSessionResult> {
   try {
     const res = await fetch('/api/content', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'google-login', idToken }),
+      body: JSON.stringify({ action: 'login', username, password }),
     });
     return await res.json();
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Network error during Google sign-in.',
-    };
-  }
-}
-
-export async function loginLocalSandbox(email: string): Promise<AuthSessionResult> {
-  try {
-    const res = await fetch('/api/content', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'sandbox-login', email }),
-    });
-    return await res.json();
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : 'Local sandbox sign-in failed.',
+      error: err instanceof Error ? err.message : 'Network error during sign-in.',
     };
   }
 }
@@ -231,17 +210,19 @@ export async function verifyAdminSession(sessionToken: string): Promise<AuthSess
   }
 }
 
-export async function updateAllowedAdminEmails(
-  allowedEmails: string[],
+export async function upsertAdminUser(
+  username: string,
+  password: string,
   sessionToken: string
-): Promise<AllowlistUpdateResult> {
+): Promise<UserManagementResult> {
   try {
     const res = await fetch('/api/content', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'update-allowlist',
-        allowedEmails,
+        action: 'upsert-user',
+        username,
+        password,
         sessionToken,
       }),
     });
@@ -249,7 +230,30 @@ export async function updateAllowedAdminEmails(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Network error updating allowed accounts.',
+      error: err instanceof Error ? err.message : 'Network error saving user account.',
+    };
+  }
+}
+
+export async function deleteAdminUser(
+  username: string,
+  sessionToken: string
+): Promise<UserManagementResult> {
+  try {
+    const res = await fetch('/api/content', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'delete-user',
+        username,
+        sessionToken,
+      }),
+    });
+    return await res.json();
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Network error removing user account.',
     };
   }
 }

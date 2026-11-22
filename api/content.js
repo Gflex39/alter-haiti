@@ -2,11 +2,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   authenticateAdminSession,
+  authenticateCredentials,
+  createHashedUserRecord,
   createSessionToken,
-  fetchAllowedEmails,
+  getMasterAdminPassword,
+  getMasterAdminUsername,
+  getPepperSecret,
   getSessionSecret,
-  saveAllowedEmailsToGithub,
-  verifyGoogleIdToken,
+  normalizeUsername,
+  saveUsersToGithub,
+  toPublicUserSummaries,
 } from '../lib/auth.js';
 
 const DEFAULT_REPO = 'Gflex39/alter-haiti';
@@ -62,7 +67,7 @@ export async function fetchRemoteSiteContent({ repo, branch, githubToken }) {
   return await readLocalContentFallback();
 }
 
-export async function commitContentToGithub({ repo, branch, githubToken, content, actorEmail }) {
+export async function commitContentToGithub({ repo, branch, githubToken, content, actorUsername }) {
   const apiUrl = `https://api.github.com/repos/${repo}/contents/${CONTENT_PATH}`;
   const headers = {
     Authorization: `Bearer ${githubToken}`,
@@ -84,7 +89,7 @@ export async function commitContentToGithub({ repo, branch, githubToken, content
 
   const encoded = Buffer.from(JSON.stringify(content, null, 2) + '\n', 'utf8').toString('base64');
   const putBody = {
-    message: `content: update website via visual editor (${actorEmail || 'admin'})`,
+    message: `content: update website via visual editor (@${actorUsername || 'admin'})`,
     content: encoded,
     branch,
     ...(existingSha ? { sha: existingSha } : {}),
@@ -117,11 +122,11 @@ export default async function handler(req, res) {
   const repo = process.env.GITHUB_REPO || DEFAULT_REPO;
   const branch = process.env.GITHUB_BRANCH || DEFAULT_BRANCH;
   const githubToken = process.env.GITHUB_TOKEN || '';
-  const googleClientId =
-    process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '';
+  const masterUsername = getMasterAdminUsername();
+  const masterPassword = getMasterAdminPassword();
 
   const configured = {
-    hasGoogleClientId: Boolean(googleClientId),
+    hasAdminPassword: Boolean(masterPassword),
     hasGithubToken: Boolean(githubToken),
   };
 
@@ -138,7 +143,6 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       content,
-      googleClientId,
       configured,
       repo,
       branch,
@@ -151,12 +155,12 @@ export default async function handler(req, res) {
     const action = body.action || 'publish';
 
     const missing = [
-      ...(!googleClientId ? ['GOOGLE_CLIENT_ID'] : []),
+      ...(!masterPassword ? ['ADMIN_PASSWORD'] : []),
       ...(!githubToken ? ['GITHUB_TOKEN'] : []),
     ];
 
-    // 1. Exchange Google ID Token -> Verified Admin Session
-    if (action === 'google-login') {
+    // 1. Username + Password Sign-In
+    if (action === 'login') {
       if (missing.length > 0) {
         return res.status(200).json({
           ok: false,
@@ -167,45 +171,45 @@ export default async function handler(req, res) {
         });
       }
 
-      try {
-        const user = await verifyGoogleIdToken(body.idToken, googleClientId);
-        const { allowedEmails, envPinnedEmails } = await fetchAllowedEmails({
-          repo,
-          branch,
-          githubToken,
-        });
+      const result = await authenticateCredentials({
+        username: body.username,
+        password: body.password,
+        repo,
+        branch,
+        githubToken,
+        masterUsername,
+        masterPassword,
+      });
 
-        if (!allowedEmails.includes(user.email)) {
-          await new Promise((r) => setTimeout(r, 400));
-          return res.status(403).json({
-            ok: false,
-            code: 'FORBIDDEN_EMAIL',
-            email: user.email,
-            error: `Access denied: ${user.email} is not on the approved editors list.`,
-          });
-        }
-
-        const secret = getSessionSecret({ githubToken, googleClientId });
-        const sessionToken = createSessionToken(user, secret);
-
-        return res.status(200).json({
-          ok: true,
-          sessionToken,
-          user,
-          allowedEmails,
-          envPinnedEmails,
-          configured,
-        });
-      } catch (err) {
+      if (!result.ok) {
+        await new Promise((r) => setTimeout(r, 350));
         return res.status(401).json({
           ok: false,
           code: 'UNAUTHORIZED',
-          error: err instanceof Error ? err.message : 'Google sign-in verification failed.',
+          error: result.error || 'Incorrect username or password.',
         });
       }
+
+      const secret = getSessionSecret({ githubToken, adminPassword: masterPassword });
+      const sessionToken = createSessionToken(
+        {
+          username: result.user.username,
+          role: result.user.role,
+          pwdTag: result.pwdTag,
+        },
+        secret
+      );
+
+      return res.status(200).json({
+        ok: true,
+        sessionToken,
+        user: result.user,
+        users: result.users,
+        configured,
+      });
     }
 
-    // 2. Verify existing session token on page reload
+    // 2. Verify Existing Session Token
     if (action === 'verify-session') {
       if (missing.length > 0) {
         return res.status(200).json({
@@ -215,13 +219,16 @@ export default async function handler(req, res) {
           configured,
         });
       }
+
       const auth = await authenticateAdminSession({
         sessionToken: body.sessionToken,
         repo,
         branch,
         githubToken,
-        googleClientId,
+        masterUsername,
+        masterPassword,
       });
+
       if (!auth.ok) {
         return res.status(auth.status).json({
           ok: false,
@@ -229,16 +236,16 @@ export default async function handler(req, res) {
           error: auth.error,
         });
       }
+
       return res.status(200).json({
         ok: true,
         user: auth.user,
-        allowedEmails: auth.allowedEmails,
-        envPinnedEmails: auth.envPinnedEmails,
+        users: auth.users,
         configured,
       });
     }
 
-    // All remaining write actions require both env vars and a verified Google session
+    // All remaining write actions require env vars + active verified session
     if (missing.length > 0) {
       return res.status(200).json({
         ok: false,
@@ -254,8 +261,10 @@ export default async function handler(req, res) {
       repo,
       branch,
       githubToken,
-      googleClientId,
+      masterUsername,
+      masterPassword,
     });
+
     if (!auth.ok) {
       return res.status(auth.status).json({
         ok: false,
@@ -264,30 +273,107 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Update Allowed Google Accounts List
-    if (action === 'update-allowlist') {
+    // 3. Create or Reset an Editor User Account (Owner only)
+    if (action === 'upsert-user') {
+      if (auth.user.role !== 'owner') {
+        return res.status(403).json({
+          ok: false,
+          error: 'Only the Master Admin account can add or update user passwords.',
+        });
+      }
+
       try {
-        const updatedList = await saveAllowedEmailsToGithub({
+        const targetUsername = normalizeUsername(body.username);
+        if (targetUsername === masterUsername) {
+          return res.status(400).json({
+            ok: false,
+            error: `"${masterUsername}" is the Master Admin username controlled by ADMIN_PASSWORD in Vercel.`,
+          });
+        }
+
+        const pepper = getPepperSecret(masterPassword);
+        const freshRecord = createHashedUserRecord(targetUsername, body.password, pepper);
+        const existingList = Array.isArray(auth.storedUsers) ? auth.storedUsers : [];
+        const existingIdx = existingList.findIndex(
+          (u) => normalizeUsername(u.username) === targetUsername
+        );
+
+        const nextStored = [...existingList];
+        if (existingIdx >= 0) {
+          nextStored[existingIdx] = {
+            ...freshRecord,
+            createdAt: existingList[existingIdx].createdAt || freshRecord.createdAt,
+          };
+        } else {
+          nextStored.push(freshRecord);
+        }
+
+        await saveUsersToGithub({
           repo,
           branch,
           githubToken,
-          allowedEmails: body.allowedEmails,
-          actorEmail: auth.user.email,
+          users: nextStored,
+          existingSha: auth.storedUsersSha,
+          message: `security: ${existingIdx >= 0 ? 'update password for' : 'add'} studio user @${targetUsername}`,
         });
+
         return res.status(200).json({
           ok: true,
-          allowedEmails: updatedList,
-          envPinnedEmails: auth.envPinnedEmails,
+          users: toPublicUserSummaries(nextStored, masterUsername),
         });
       } catch (err) {
         return res.status(400).json({
           ok: false,
-          error: err instanceof Error ? err.message : 'Could not update allowed emails.',
+          error: err instanceof Error ? err.message : 'Could not save user account.',
         });
       }
     }
 
-    // 4. Publish Website Content
+    // 4. Delete an Editor User Account (Owner only)
+    if (action === 'delete-user') {
+      if (auth.user.role !== 'owner') {
+        return res.status(403).json({
+          ok: false,
+          error: 'Only the Master Admin account can remove users.',
+        });
+      }
+
+      try {
+        const targetUsername = normalizeUsername(body.username);
+        if (targetUsername === masterUsername) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Cannot remove the Master Admin account.',
+          });
+        }
+
+        const existingList = Array.isArray(auth.storedUsers) ? auth.storedUsers : [];
+        const nextStored = existingList.filter(
+          (u) => normalizeUsername(u.username) !== targetUsername
+        );
+
+        await saveUsersToGithub({
+          repo,
+          branch,
+          githubToken,
+          users: nextStored,
+          existingSha: auth.storedUsersSha,
+          message: `security: revoke studio user @${targetUsername}`,
+        });
+
+        return res.status(200).json({
+          ok: true,
+          users: toPublicUserSummaries(nextStored, masterUsername),
+        });
+      } catch (err) {
+        return res.status(400).json({
+          ok: false,
+          error: err instanceof Error ? err.message : 'Could not remove user account.',
+        });
+      }
+    }
+
+    // 5. Publish Website Content
     const nextContent = body.content;
     if (
       !nextContent ||
@@ -315,7 +401,7 @@ export default async function handler(req, res) {
         branch,
         githubToken,
         content: stampedContent,
-        actorEmail: auth.user.email,
+        actorUsername: auth.user.username,
       });
       return res.status(200).json({
         ok: true,

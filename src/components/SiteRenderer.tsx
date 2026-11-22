@@ -139,6 +139,7 @@ export const SiteRenderer: React.FC<SiteRendererProps> = ({
     <div className={`page-wrapper ${editMode ? 'is-canvas-editing' : ''}`} style={cssVars}>
       {/* HEADER */}
       <header
+        data-cms-target="header"
         className={`header ${editMode ? 'cms-selectable-region' : ''} ${
           isHeaderSelected ? 'is-selected' : ''
         }`}
@@ -225,6 +226,7 @@ export const SiteRenderer: React.FC<SiteRendererProps> = ({
         return (
           <React.Fragment key={section.id}>
             <div
+              data-cms-target={section.id}
               className={`cms-section-shell ${editMode ? 'is-editable' : ''} ${
                 isSelected ? 'is-selected' : ''
               } ${section.hidden ? 'is-hidden-section' : ''}`}
@@ -318,6 +320,7 @@ export const SiteRenderer: React.FC<SiteRendererProps> = ({
 
       {/* FOOTER */}
       <footer
+        data-cms-target="footer"
         className={`footer ${editMode ? 'cms-selectable-region' : ''} ${
           isFooterSelected ? 'is-selected' : ''
         }`}
